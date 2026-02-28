@@ -23,7 +23,7 @@ func main() {
 	// it ensures the port is released when the program stops
 	defer listener.Close()
 
-	fmt.Println("TCP server listening on port 8085...")
+	fmt.Println("TCP server listening on port 8080...")
 	fmt.Println("Waiting for connections....")
 
 	for {
@@ -77,37 +77,38 @@ func handleRequest(conn net.Conn) {
 	method := requestLine[0]
 
 	contentLength := 0
+	// first line is the request line, we can skip it
 	// starting from the second line
 	for _, line := range lines[1:] {
 		// check if the line starts with "Content-Length:"
+
 		if strings.HasPrefix(line, "Content-Length:") {
 			value := strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:"))
 			contentLength, _ = strconv.Atoi(value)
 		}
 	}
 
-	// 4. Validate the body
-	// what does it means?
-	// if contentLength > 0 {
-	//    if len(bodyPart) < contentLength {
-	//         // we have not received the full body yet, we need to wait for more data
-	//     }
-	// }
-	// In real server, if len(bodyPart) < contentLength, we would need 
-	// to call conn.Read() again to get the rest.
+	// it means the body part is larger than the content length specified in the header,
+	// we should trim it down to the content length
 
-	// extract the path (e.g., "/")
-	path := requestLine[1]
+	// POST /data HTTP/1.1
+	// Content-Length: 5
+	// helloEXTRA_JUNK -> 13
+	//13 > 5 -> we should trim it down to 5
+	if len(bodyPart) > contentLength {
+		bodyPart = bodyPart[:contentLength]
+	}
 
-	// construct the Response body
-	body := fmt.Sprintf("Hello, you performed a %s request to the path: %s", method, path)
+	fmt.Printf("Received %s request from the body: '%s'\n", method, bodyPart)
+
+	responseBody := fmt.Sprintf("Received: %s", bodyPart)
 
 	// construct the HTTP Response String
 	response := "HTTP/1.1 200 OK\r\n" +
 				"Content-Type: text/plain\r\n" +
-				"Content-Length: " + fmt.Sprint(len(body)) + "\r\n" +
+				"Content-Length: " + strconv.Itoa(len(responseBody)) + "\r\n" +
 				"Connection: close\r\n" +
-				"\r\n" + body
+				"\r\n" + responseBody
 
 	// write back the response to the response
 	conn.Write([]byte(response))
