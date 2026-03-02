@@ -31,15 +31,44 @@ type handlerFunc func(req Request) (statusCode int, body string)
 // This lets us easily look up and run the correct code for any incoming request.
 var routes = map[string]handlerFunc{}
 
+// "GET /home" -> handler
+// mapping the key to its handler function
 func addRoute(method string, path string, handler handlerFunc) {
 	key := method + " " + path
 	routes[key] = handler
+}
+
+// look up and call the right handler
+// Returns comma ok pattern: if the handler exists, it returns the handler and true;
+// otherwise, it returns nil and false.
+func findHandler(method string, path string) (handlerFunc, bool){
+	key := method + " " + path
+	handler, exists := routes[key]
+	return handler, exists
 }
 
 /* we are actually implementing the HTTP/1.1 protocol
  * we have to manually format the text strings that browsers expect to see
  */
 func main() {
+
+	// Registering all the routes
+	addRoute("GET", "/", func(req Request)(int, string){
+		return 200, "Welcome to the homepage!"
+	})
+
+	addRoute("GET", "/about", func(req request)(int, string)){
+		return 200, "This is the about page!"
+	})
+
+	addRoute("GET", "/hello", func(req Request)(int, string)){
+		return 200, "Hello, world!"
+	})
+
+	addRoute("POST", "/data", func(req Request)(int, string)){
+		return 200, fmt.Sprintf("You sent: %s", req.ody)
+	})
+
 	// create a TCP listener on port 8085
 	// this opens a 'socket' that waits for any incoming data packets
 	listener, err := net.Listen("tcp", ":8080")
@@ -67,15 +96,15 @@ func main() {
 	}
 }
 
-func handleGetRequest(args ...string) string {
-	method := "GET"
-	path := args[1]
-}
+// func handleGetRequest(args ...string) string {
+// 	method := "GET"
+// 	path := args[1]
+// }
 
-func handlePostRequest(args ...string) string {
-	method := "POST"
-	path := args[1]
-}
+// func handlePostRequest(args ...string) string {
+// 	method := "POST"
+// 	path := args[1]
+// }
 
 func handleRequest(conn net.Conn) {
 	// ensures the connction closed when finished responding
