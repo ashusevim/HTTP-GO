@@ -38,14 +38,14 @@ func addRoute(method string, path string, handler handlerFunc) {
 	routes[key] = handler
 }
 
-// look up and call the right handler
-// Returns comma ok pattern: if the handler exists, it returns the handler and true;
-// otherwise, it returns nil and false.
-func findHandler(method string, path string) (handlerFunc, bool){
-	key := method + " " + path
-	handler, exists := routes[key]
-	return handler, exists
-}
+// // look up and call the right handler
+// // Returns comma ok pattern: if the handler exists, it returns the handler and true;
+// // otherwise, it returns nil and false.
+// func findHandler(method string, path string) (handlerFunc, bool){
+// 	key := method + " " + path
+// 	handler, exists := routes[key]
+// 	return handler, exists
+// }
 
 /* we are actually implementing the HTTP/1.1 protocol
  * we have to manually format the text strings that browsers expect to see
@@ -57,16 +57,16 @@ func main() {
 		return 200, "Welcome to the homepage!"
 	})
 
-	addRoute("GET", "/about", func(req request)(int, string)){
+	addRoute("GET", "/about", func(req Request)(int, string){
 		return 200, "This is the about page!"
 	})
 
-	addRoute("GET", "/hello", func(req Request)(int, string)){
+	addRoute("GET", "/hello", func(req Request)(int, string){
 		return 200, "Hello, world!"
 	})
 
-	addRoute("POST", "/data", func(req Request)(int, string)){
-		return 200, fmt.Sprintf("You sent: %s", req.ody)
+	addRoute("POST", "/data", func(req Request)(int, string){
+		return 200, fmt.Sprintf("You sent: %s", req.Body)
 	})
 
 	// create a TCP listener on port 8085
@@ -96,15 +96,62 @@ func main() {
 	}
 }
 
-// func handleGetRequest(args ...string) string {
-// 	method := "GET"
-// 	path := args[1]
-// }
+func parseRequest(rawData string) (Request, error) {
+	// 1. Seperate the headers and body in two different parts
+	parts := strings.SplitN(rawData, "\r\n\r\n", 2);
+	headerPart := parts[0]
 
-// func handlePostRequest(args ...string) string {
-// 	method := "POST"
-// 	path := args[1]
-// }
+	bodyPart := ""
+	if len(parts) > 1 {
+		bodyPart = parts[1]
+	}
+
+	// e.g, Method: "GET"
+	//  	Path: "/home"
+	// 		Protocol: "HTTP/1.1\r\n"
+	lines := strings.Split(headerPart, "\r\n")
+	requestLine := strings.Split(lines[0], " ")
+
+	if len(requestLine) < 3 {
+		return Request{}, fmt.Errorf("invalid request line")
+	}
+
+	method := requestLine[0]
+	path := requestLine[1]
+	protocol := requestLine[2]
+
+	// parse all headers into a map
+	headers := map[string]string{}
+
+	for _, line := range lines[1:] {
+		// each header looks like "key: value"
+		colonIndex := strings.Index(line, ":")
+		if colonIndex == -1 {
+			continue
+		}
+
+		key := strings.TrimSpace(line[:colonIndex])
+		value := strings.TrimSpace(line[colonIndex+1:])
+
+		// store with lowercase key so lookups becomes easy
+		headers[strings.ToLower(key)] = value
+	}
+
+	if clStr, ok := headers["content-length"]; ok {
+		contentLength, _ := strconv.Atoi(clStr)
+		if len(bodyPart) > contentLength {
+			bodyPart = bodyPart[:contentLength]
+		}
+	}
+
+	return Request {
+		Method: method,
+		Path: path,
+		Protocol: protocol,
+		Headers: headers,
+		Body: bodyPart,
+	}, nil
+}
 
 func handleRequest(conn net.Conn) {
 	// ensures the connction closed when finished responding
@@ -115,84 +162,51 @@ func handleRequest(conn net.Conn) {
 
 	n, err := conn.Read(buffer)
 	if err != nil {
-		fmt.Println("Error reading from connections: ", err)
+		fmt.Println("Error reading from connection: ", err)
 		return
 	}
 
 	// use raw bytes upto n
 	rawData := string(buffer[:n])
 
-	// 2. Seperate the headers and body in two different parts
-	parts := strings.SplitN(rawData, "\r\n\r\n", 2)
-
-	// header part
-	headerPart := parts[0]
-
-	// body part
-	bodyPart := "";
-	if len(parts) > 1 {
-		bodyPart = parts[1]
-	}
-
-	// 3. parse the headers to find the Content-Length
-	lines := strings.Split(headerPart, "\r\n")
-
-	// The first line would be "METHOD PATH PROTOCOL GET /home HTTP/1.1
-	requestLine := strings.Split(lines[0], " ")
-
-	// requestLine := ["GET", "/home", "HTTP/1.1"]
-
-	// extract the method (GET, POST, PUT, DELETE)
-	if len(requestLine) < 3 {
-		fmt.Println("Invalid request line")
+	// parse the raw data into a clean Request struct
+	req, err := parseRequest(rawData)
+	if err != nil {
+		fmt.Println("Error parsing the request: ", err)
 		return
 	}
 
-	method := requestLine[0]
-	// path:= method[1]
-	// protocol := requestLine[2]
+	fmt.Printf("%s %s\n", req.Method, req.Body)
 
-	if method == "GET" {
-		go handleGetRequest(requestLine...)
-	}
-	if method == "POST" {
-		go handleGetRequest(requestLine...)
-	}
+	// look up route in our map
+	var statusCode int
+	var responseBody string
 
-	contentLength := 0
-	// first line is the request line, we can skip it
-	// starting from the second line
-	for _, line := range lines[1:] {
-		// check if the line starts with "Content-Length:"
+	key := req.Method + " " + req.Path
+	handler, found := routes[key]
 
-		if strings.HasPrefix(line, "Content-Length:") && strings.EqualFold(line, "Content-Length:") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:"))
-			contentLength, _ = strconv.Atoi(value)
-		}
+	if found {
+		// we found a matching route - call its handler function
+		statusCode, responseBody = handler(req)
+	} else {
+		// No matching route - return 404
+		statusCode = 404
+		responseBody = fmt.Sprintf("404 Not Found: %s %s", req.Method, req.Path)
 	}
 
-	// it means the body part is larger than the content length specified in the header,
-	// we should trim it down to the content length
-
-	// POST /data HTTP/1.1
-	// Content-Length: 5
-	// helloEXTRA_JUNK -> 13
-	// 13 > 5 -> we should trim it down to 5
-
-	if len(bodyPart) > contentLength {
-		bodyPart = bodyPart[:contentLength]
+	// default statusCode
+	statusText := "OK"
+	switch(statusCode){
+		case 404: statusText = "Not found";
+		case 400: statusText = "Bad Request";
 	}
 
-	fmt.Printf("Received %s request from the body: '%s'\n", method, bodyPart)
-
-	responseBody := fmt.Sprintf("Received: %s", bodyPart)
-
-	// construct the HTTP Response String
-	response := "HTTP/1.1 200 OK\r\n" +
-				"Content-Type: text/plain\r\n" +
-				"Content-Length: " + strconv.Itoa(len(responseBody)) + "\r\n" +
-				"Connection: close\r\n" +
-				"\r\n" + responseBody
+	response := fmt.Sprintf("HTTP/1.1 %d %s\r\n" +
+		"Content-Type: text/plain\r\n" +
+		"Content-Length: %d" +
+		"Connection: close\r\n" +
+		"\r\n%s",
+		statusCode, statusText, len(responseBody), responseBody)
 
 	// write back the response to the response
 	conn.Write([]byte(response))
